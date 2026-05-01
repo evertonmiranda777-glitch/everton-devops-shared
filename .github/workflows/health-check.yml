@@ -1,0 +1,26 @@
+name: Manual health check (reusable, debug)
+
+on:
+  workflow_call:
+    inputs:
+      health_urls:
+        description: 'URLs|content_check por linha'
+        required: true
+        type: string
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout shared
+        uses: actions/checkout@v4
+        with:
+          repository: evertonmiranda777-glitch/everton-devops-shared
+          path: shared
+      - name: Health check
+        env:
+          HEALTH_URLS: ${{ inputs.health_urls }}
+        run: |
+          chmod +x shared/scripts/health-check.sh
+          shared/scripts/health-check.sh

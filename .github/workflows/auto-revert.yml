@@ -1,0 +1,71 @@
+name: Auto-revert prod (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      project_name:
+        description: 'Nome do projeto (pra logs/alertas)'
+        required: true
+        type: string
+      vercel_project_id:
+        description: 'Vercel project ID (prj_XXXX)'
+        required: true
+        type: string
+      health_urls:
+        description: 'URLs|content_check separadas por linha (opcional, pra confirmar antes de reverter)'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      VERCEL_TOKEN:
+        required: true
+      TELEGRAM_BOT_TOKEN:
+        required: false
+      TELEGRAM_CHAT_ID:
+        required: false
+
+jobs:
+  revert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout shared scripts
+        uses: actions/checkout@v4
+        with:
+          repository: evertonmiranda777-glitch/everton-devops-shared
+          path: shared
+
+      - name: Confirm site is actually down (3 attempts)
+        if: inputs.health_urls != ''
+        env:
+          HEALTH_URLS: ${{ inputs.health_urls }}
+        run: |
+          chmod +x shared/scripts/health-check.sh
+          if shared/scripts/health-check.sh; then
+            echo "Site is healthy — aborting revert (false positive)"
+            exit 78  # neutral exit
+          fi
+        continue-on-error: false
+
+      - name: Revert via Vercel API
+        id: revert
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID: ${{ inputs.vercel_project_id }}
+        run: |
+          chmod +x shared/scripts/vercel-revert.sh
+          PREV=$(shared/scripts/vercel-revert.sh)
+          echo "prev_url=$PREV" >> $GITHUB_OUTPUT
+
+      - name: Notify Telegram
+        if: always() && env.TELEGRAM_BOT_TOKEN != ''
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          chmod +x shared/scripts/notify-telegram.sh
+          if [[ "${{ steps.revert.outcome }}" == "success" ]]; then
+            shared/scripts/notify-telegram.sh "🔄 <b>${{ inputs.project_name }}</b> revertido em prod%0A%0ADeploy anterior promovido: ${{ steps.revert.outputs.prev_url }}%0A%0AInvestigar antes do proximo push."
+          else
+            shared/scripts/notify-telegram.sh "⚠️ <b>${{ inputs.project_name }}</b> tentativa de revert FALHOU%0A%0AVer logs do GH Actions"
+          fi
